@@ -1,0 +1,528 @@
+﻿@page "/AreasFeria"
+
+@using System.Text.Json
+@using CarnetsdeFeria.Models
+@using CarnetsdeFeria.Interfaces
+@using ModelAreaFeria = CarnetsdeFeria.Models.FeriaArea
+@using ModelEspacioParque = CarnetsdeFeria.Models.EspacioParque
+
+@inject IAreasdeFeria areasFeria_Service
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+
+<h3 style="margin-bottom: 20px;">Gestión de Áreas de Feria</h3>
+
+<div style="margin-bottom: 20px;">
+    <button @onclick="OpenCreateModal" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Agregar Nueva Área
+    </button>
+    <button @onclick="PrintTable" class="btn btn-secondary ml-2">
+        <i class="fas fa-print"></i> Imprimir
+    </button>
+    <div class="form-check form-switch mt-2">
+        <input class="form-check-input" type="checkbox" id="showOnlyActive" @bind="showOnlyActive" @bind:after="OnShowOnlyActiveChanged" />
+        <label class="form-check-label" for="showOnlyActive">
+            Mostrar solo áreas activas
+        </label>
+    </div>
+</div>
+
+<MudPaper Elevation="3" Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-2 text-center" Align="Align.Center">Áreas de Feria</MudText>
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" sm="6">
+            <MudTextField T="string" Label="Buscar por Área"
+                          Variant="Variant.Outlined"
+                          @bind-Value="searchArea"
+                          Immediate="true"
+                          DebounceInterval="300"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          AdornmentColor="Color.Primary"
+                          OnDebounceIntervalElapsed="Search" />
+        </MudItem>
+    </MudGrid>
+
+    <br />
+
+    @if (isLoading)
+    {
+        <div class="spinner-container">
+            <img src="/images/world-spinner.gif" alt="Cargando..." class="spinner-image" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="ModelAreaFeria"
+                  ServerData="@(new Func<TableState, CancellationToken, Task<TableData<ModelAreaFeria>>>(ServerReload))"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Loading="@isLoading"
+                  RowClass="cursor-pointer"
+                  Class="printable-table"
+                  @ref="table">
+
+            <HeaderContent>
+                <MudTh>Descripción del Área</MudTh>
+                <MudTh>Cantidad de Stands</MudTh>
+                <MudTh>Feria</MudTh>
+                <MudTh>Espacio</MudTh>
+                <MudTh>Estado</MudTh>
+                <MudTh Class="acciones">Acciones</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="Descripción del Área">@context.DescripcionArea</MudTd>
+                <MudTd DataLabel="Cantidad de Stands">@context.CantidadStand</MudTd>
+                <MudTd DataLabel="Feria">
+                    @if (context.IdFeriaNavigation != null)
+                    {
+                        @context.IdFeriaNavigation.DescripcionFeria
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">Sin Asignar</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Espacio">
+                    @if (context.IdEspacioNavigation != null)
+                    {
+                        @(context.IdEspacioNavigation.DescripcionEspacio ?? "Sin descripción")
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">Sin Asignar</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Estado">
+                    @if (context.Estatus.HasValue)
+                    {
+                        <MudChip T="string" Color="@(context.Estatus.Value? Color.Success: Color.Error)"
+                                 Size="Size.Small">
+                            @(context.Estatus.Value ? "✅ Activo" : "⛔ Inactivo")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">⚠️ No definido</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Acciones" Class="acciones">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   OnClick="@(() => OpenEditModal(context))"
+                                   Title="Editar" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   OnClick="@(() => ConfirmDelete(context.Id))"
+                                   Title="Eliminar" />
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager RowsPerPageString="Áreas por página:"
+                               InfoFormat="@infoFormat"
+                               PageSizeOptions="new int[] { 20, 25, 30, 40, int.MaxValue }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+<!-- Modal para Crear/Editar usando Bootstrap -->
+@if (showModal)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Editar Área de Feria" : "Nueva Área de Feria")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group mb-3">
+                        <label for="DescripcionArea" class="form-label">Descripción del Área</label>
+                        <input type="text"
+                               class="form-control"
+                               id="DescripcionArea"
+                               @bind="currentAreaFeria.DescripcionArea"
+                               placeholder="Ingrese la descripción del área"
+                               required />
+                        @if (showValidationError && string.IsNullOrWhiteSpace(currentAreaFeria.DescripcionArea))
+                        {
+                            <div class="text-danger mt-1">La descripción del área es requerida</div>
+                        }
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label for="CantidadStand" class="form-label">Cantidad de Stands</label>
+                        <input type="text"
+                               class="form-control"
+                               id="CantidadStand"
+                               @bind="currentAreaFeria.CantidadStand"
+                               placeholder="Ingrese la cantidad de stands" />
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="IdFeria" class="form-label">Seleccionar Feria</label>
+                                <select class="form-select" id="IdFeria" @bind="currentAreaFeria.IdFeria">
+                                    <option value="">-- Seleccione una Feria --</option>
+                                    @if (feriasDisponibles != null)
+                                    {
+                                        @foreach (var feria in feriasDisponibles)
+                                        {
+                                            <option value="@feria.Id">@feria.DescripcionFeria</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && !currentAreaFeria.IdFeria.HasValue)
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar una feria</div>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="IdEspacio" class="form-label">Seleccionar Espacio</label>
+                                <select class="form-select" id="IdEspacio" @bind="currentAreaFeria.IdEspacio">
+                                    <option value="">-- Seleccione un Espacio --</option>
+                                    @if (espaciosDisponibles != null)
+                                    {
+                                        @foreach (var espacio in espaciosDisponibles)
+                                        {
+                                            <option value="@espacio.Id">
+                                                @(espacio.DescripcionEspacio ?? "Sin descripción")
+                                                @if (espacio.TotalMetros.HasValue)
+                                                {
+                                                    <text> (@espacio.TotalMetros.Value.ToString("F2") m²)</text>
+                                                }
+                                            </option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && !currentAreaFeria.IdEspacio.HasValue)
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un espacio</div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="tblaEstatus" @bind="estatusTemp" />
+                        <label class="form-check-label fw-bold" for="tblaEstatus">
+                            @((estatusTemp ? "✅ Área Activa" : "⛔ Área Inactiva"))
+                        </label>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                        Cancelar
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SaveAreaFeria"
+                            disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Guardando...</span>
+                        }
+                        else
+                        {
+                            <span>@(isEditMode ? "Actualizar" : "Guardar")</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool isLoading = false;
+    private string infoFormat = "{first_item}-{last_item} de {all_items}";
+    private DialogOptions dialogOptions = new() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private string searchArea = "";
+    private MudTable<ModelAreaFeria> table;
+    private bool showOnlyActive = false; // Nueva variable para filtrar solo activos
+
+    // Variables para el modal
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool showValidationError = false;
+    private bool isSaving = false;
+    private ModelAreaFeria currentAreaFeria = new ModelAreaFeria();
+
+    // Variable temporal para manejar el checkbox nullable
+    private bool estatusTemp = true;
+
+    // Listas para los dropdowns
+    private List<Ferium> feriasDisponibles = new List<Ferium>();
+    private List<ModelEspacioParque> espaciosDisponibles = new List<ModelEspacioParque>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdownData();
+    }
+
+    private async Task LoadDropdownData()
+    {
+        try
+        {
+            // Cargar ferias activas
+            feriasDisponibles = await areasFeria_Service.GetFeriaAsync();
+
+            // Cargar espacios disponibles
+            espaciosDisponibles = await areasFeria_Service.GetEspaciosAsync();
+
+            Console.WriteLine($"Cargadas {feriasDisponibles.Count} ferias y {espaciosDisponibles.Count} espacios");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos de dropdown: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar datos iniciales.");
+        }
+    }
+
+    private async Task<TableData<ModelAreaFeria>> ServerReload(TableState state, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"ServerReload - Página: {state.Page + 1}, PageSize: {state.PageSize}, Búsqueda: '{searchArea}', Solo activos: {showOnlyActive}");
+
+        try
+        {
+            var page = state.Page + 1;
+            var pageSize = state.PageSize;
+
+            // Usar el método apropiado según si queremos solo activos o todos
+            MPaginatedResult<ModelAreaFeria> result;
+            if (showOnlyActive)
+            {
+                result = await areasFeria_Service.GetPaginatedActiveAsync(page, pageSize, searchArea);
+            }
+            else
+            {
+                result = await areasFeria_Service.GetPaginatedAsync(page, pageSize, searchArea);
+            }
+
+            Console.WriteLine($"ServerReload - Datos obtenidos: {result?.Items?.Count ?? 0} items de {result?.TotalCount ?? 0} total");
+
+            return new TableData<ModelAreaFeria>
+            {
+                Items = result?.Items ?? new List<ModelAreaFeria>(),
+                TotalItems = result?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en ServerReload: {ex.Message}");
+            return new TableData<ModelAreaFeria>
+            {
+                Items = new List<ModelAreaFeria>(),
+                TotalItems = 0
+            };
+        }
+    }
+
+    private async Task Search()
+    {
+        Console.WriteLine($"Search - Término de búsqueda: '{searchArea}'");
+
+        if (table != null)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private async Task OnShowOnlyActiveChanged()
+    {
+        Console.WriteLine($"OnShowOnlyActiveChanged - Mostrar solo activos: {showOnlyActive}");
+
+        if (table != null)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private async Task OpenCreateModal()
+    {
+        currentAreaFeria = new ModelAreaFeria
+        {
+            Id = 0,
+            DescripcionArea = "",
+            CantidadStand = "",
+            IdFeria = null,
+            IdEspacio = null,
+            Estatus = true,      // Activa por defecto
+            Eliminada = false,   // Visible por defecto (NO eliminada)
+        };
+
+        estatusTemp = true;
+        isEditMode = false;
+        showModal = true;
+        showValidationError = false;
+
+        // Recargar datos de dropdown por si han cambiado
+        await LoadDropdownData();
+
+        Console.WriteLine("Modal abierto para crear área de feria");
+    }
+
+    private async Task OpenEditModal(ModelAreaFeria areaFeria)
+    {
+        try
+        {
+            // Obtener los datos completos del elemento
+            var fullData = await areasFeria_Service.GetByIdAsync(areaFeria.Id);
+
+            currentAreaFeria = new ModelAreaFeria
+            {
+                Id = fullData.Id,
+                DescripcionArea = fullData.DescripcionArea,
+                CantidadStand = fullData.CantidadStand,
+                IdFeria = fullData.IdFeria,
+                IdEspacio = fullData.IdEspacio,
+                Estatus = fullData.Estatus,
+                Eliminada = fullData.Eliminada
+            };
+
+            // Inicializar la variable temporal con el valor actual
+            estatusTemp = fullData.Estatus ?? true;
+
+            isEditMode = true;
+            showModal = true;
+            showValidationError = false;
+
+            // Recargar datos de dropdown
+            await LoadDropdownData();
+
+            Console.WriteLine($"Modal abierto para editar ID: {areaFeria.Id}, Feria: {fullData.IdFeria}, Espacio: {fullData.IdEspacio}, Estatus: {fullData.Estatus}, Eliminada: {fullData.Eliminada}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos para editar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar los datos para editar.");
+        }
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        currentAreaFeria = new ModelAreaFeria();
+        estatusTemp = true;
+        isEditMode = false;
+        showValidationError = false;
+        Console.WriteLine("Modal cerrado");
+    }
+
+    private async Task SaveAreaFeria()
+    {
+        // Validar campos requeridos
+        showValidationError = false;
+
+        if (string.IsNullOrWhiteSpace(currentAreaFeria.DescripcionArea))
+        {
+            showValidationError = true;
+        }
+
+        if (!currentAreaFeria.IdFeria.HasValue)
+        {
+            showValidationError = true;
+        }
+
+        if (!currentAreaFeria.IdEspacio.HasValue)
+        {
+            showValidationError = true;
+        }
+
+        if (showValidationError)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        // Asignar el valor temporal al modelo antes de guardar
+        currentAreaFeria.Estatus = estatusTemp;
+
+        // Para nuevos registros, asegurar que Eliminada = false
+        if (currentAreaFeria.Id == 0)
+        {
+            currentAreaFeria.Eliminada = false; // Visible por defecto
+        }
+
+        isSaving = true;
+
+        try
+        {
+            Console.WriteLine($"Guardando área de feria - ID: {currentAreaFeria.Id}, Feria: {currentAreaFeria.IdFeria}, Espacio: {currentAreaFeria.IdEspacio}, Estatus: {currentAreaFeria.Estatus}, Eliminada: {currentAreaFeria.Eliminada}");
+
+            var result = await areasFeria_Service.AddUpdateAsync(currentAreaFeria);
+
+            if (result)
+            {
+                await JSRuntime.InvokeVoidAsync("alert",
+                    isEditMode ? "Área de feria actualizada correctamente." : "Área de feria creada correctamente.");
+
+                CloseModal();
+
+                // Recargar la tabla
+                if (table != null)
+                {
+                    await table.ReloadServerData();
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error al guardar el área de feria.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al guardar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Ocurrió un error al guardar el área de feria.");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmDelete(int id)
+    {
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "¿Estás seguro de que deseas eliminar esta área?\n\nEsta acción ocultará el área de las listas pero no la eliminará permanentemente.");
+
+        if (confirmed)
+        {
+            try
+            {
+                var deleteResult = await areasFeria_Service.DeleteAsync(id);
+                if (deleteResult)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Área eliminada correctamente.\n\nEl área ya no será visible en las listas.");
+
+                    if (table != null)
+                    {
+                        await table.ReloadServerData();
+                    }
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error\nNo fue posible eliminar el área de feria.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Error\nOcurrió un error al eliminar el área de feria.");
+            }
+        }
+    }
+
+    private async Task PrintTable()
+    {
+        await JSRuntime.InvokeVoidAsync("printTable");
+    }
+}

@@ -1,0 +1,388 @@
+﻿@page "/Ferias"
+
+@using System.Text.Json
+@using CarnetsdeFeria.Models
+@using CarnetsdeFeria.Interfaces
+@using ModelFeria = CarnetsdeFeria.Models.Ferium
+
+@inject IFeria feria_Service
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+
+
+<h3 style="margin-bottom: 20px;">Eventos de Ferias</h3>
+
+<div style="margin-bottom: 20px;">
+    <button @onclick="OpenCreateModal" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Agregar Nuevo
+    </button>
+    <button @onclick="PrintTable" class="btn btn-secondary ml-2">
+        <i class="fas fa-print"></i> Imprimir
+    </button>
+</div>
+
+<MudPaper Elevation="3" Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-2 text-center" Align="Align.Center">Eventos de Ferias</MudText>
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" sm="6">
+            <MudTextField T="string" Label="Buscar por Feria"
+                          Variant="Variant.Outlined"
+                          @bind-Value="searchArea"
+                          Immediate="true"
+                          DebounceInterval="300"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          AdornmentColor="Color.Primary"
+                          OnDebounceIntervalElapsed="Search" />
+        </MudItem>
+    </MudGrid>
+
+    <br />
+
+    @if (isLoading)
+    {
+        <div class="spinner-container">
+            <img src="/images/world-spinner.gif" alt="Cargando..." class="spinner-image" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="ModelFeria"
+                  ServerData="@(new Func<TableState, CancellationToken, Task<TableData<ModelFeria>>>(ServerReload))"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Loading="@isLoading"
+                  RowClass="cursor-pointer"
+                  Class="printable-table"
+                  @ref="table">
+
+            <HeaderContent>
+                <MudTh>Nombre de Feria</MudTh>
+                <MudTh>Fecha Inicio</MudTh>
+                <MudTh>Fecha Fin</MudTh>
+                <MudTh>Estado</MudTh>
+                <MudTh Class="acciones">Acciones</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="Descripción del Evento de Feria">@context.DescripcionFeria</MudTd>
+                <MudTd DataLabel="Fecha de Inicio de Feria">@context.FechaInicio</MudTd>
+                <MudTd DataLabel="Fecha de Fin de Feria">@context.FechaFin</MudTd>
+                <MudTd DataLabel="Estado">
+                    @if (context.Activa.HasValue)
+                    {
+                        <MudChip T="string" Color="@(context.Activa.Value? Color.Success: Color.Error)"
+                                 Size="Size.Small">
+                            @(context.Activa.Value ? "✅ Activa" : "⛔ Inactiva")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">⚠️ No definido</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Acciones" Class="acciones">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   OnClick="@(() => OpenEditModal(context))"
+                                   Title="Editar" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   OnClick="@(() => ConfirmDelete(context.Id))"
+                                   Title="Eliminar" />
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager RowsPerPageString="Productos por página:"
+                               InfoFormat="@infoFormat"
+                               PageSizeOptions="new int[] { 20, 25, 30, 40, int.MaxValue }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+<!-- Modal para Crear/Editar usando Bootstrap -->
+@if (showModal)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Editar Feria" : "Nueva Feria")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group mb-3">
+                        <label for="Feria" class="form-label">Descripción de las Ferias</label>
+                        <input type="text"
+                               class="form-control"
+                               id="Feria"
+                               @bind="currentFeria.DescripcionFeria"
+                               placeholder="Ingrese la descripción de la feria"
+                               required />
+                        @if (showValidationError && string.IsNullOrWhiteSpace(currentFeria.DescripcionFeria))
+                        {
+                            <div class="text-danger mt-1">La descripción es requerida</div>
+                        }
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="fechaInicio">Fecha de Inicio</label>
+                        <InputDate id="fechaInicio" class="form-control" @bind-Value="fechaInicioTemp" />
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label for="fechaFin">Fecha de Fin</label>
+                        <InputDate id="fechaFin" class="form-control" @bind-Value="fechaFinTemp" />
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="tblaFeria" @bind="activaTemp" />
+                        <label class="form-check-label fw-bold" for="tblaFeria">
+                            @((activaTemp ? "✅ Feria Activa" : "⛔ Feria Inactiva"))
+                        </label>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                        Cancelar
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SaveFeria"
+                            disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Guardando...</span>
+                        }
+                        else
+                        {
+                            <span>@(isEditMode ? "Actualizar" : "Guardar")</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    private bool isLoading = false;
+    private string infoFormat = "{first_item}-{last_item} de {all_items}";
+    private DialogOptions dialogOptions = new() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private string searchArea = "";
+    private MudTable<ModelFeria> table;
+
+    // Variables para el modal
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool showValidationError = false;
+    private bool isSaving = false;
+    private ModelFeria currentFeria = new ModelFeria();
+
+    // ✅ Variable temporal para manejar el checkbox de Activa
+    private bool activaTemp = false;
+
+    private async Task<TableData<ModelFeria>> ServerReload(TableState state, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"ServerReload - Página: {state.Page + 1}, PageSize: {state.PageSize}, Búsqueda: '{searchArea}'");
+
+        try
+        {
+            var page = state.Page + 1;
+            var pageSize = state.PageSize;
+
+            var result = await feria_Service.GetPaginatedAsync(page, pageSize, searchArea);
+
+            Console.WriteLine($"ServerReload - Datos obtenidos: {result?.Items?.Count ?? 0} items de {result?.TotalCount ?? 0} total");
+
+            return new TableData<ModelFeria>
+            {
+                Items = result?.Items ?? new List<ModelFeria>(),
+                TotalItems = result?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en ServerReload: {ex.Message}");
+            return new TableData<ModelFeria>
+            {
+                Items = new List<ModelFeria>(),
+                TotalItems = 0
+            };
+        }
+    }
+
+    private async Task Search()
+    {
+        Console.WriteLine($"Search - Término de búsqueda: '{searchArea}'");
+
+        if (table != null)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        currentFeria = new ModelFeria
+        {
+            Id = 0,
+            DescripcionFeria = "",
+            FechaInicio = DateOnly.FromDateTime(DateTime.Today),
+            FechaFin = DateOnly.FromDateTime(DateTime.Today),
+            Estatus = true,
+            Activa = true // ✅ Valor por defecto para nuevas ferias
+        };
+        activaTemp = true; // ✅ Inicializar la variable temporal
+        isEditMode = false;
+        showModal = true;
+        showValidationError = false;
+        Console.WriteLine("Modal abierto para crear");
+    }
+
+    private async Task OpenEditModal(ModelFeria feriaevento)
+    {
+        try
+        {
+            // Obtener los datos completos del elemento
+            var fullData = await feria_Service.GetByIdAsync(feriaevento.Id);
+
+            currentFeria = new ModelFeria
+            {
+                Id = fullData.Id,
+                DescripcionFeria = fullData.DescripcionFeria,
+                FechaInicio = fullData.FechaInicio,
+                FechaFin = fullData.FechaFin,
+                Estatus = fullData.Estatus,
+                Activa = fullData.Activa
+            };
+
+            // ✅ Inicializar la variable temporal con el valor actual
+            activaTemp = fullData.Activa ?? false;
+
+            isEditMode = true;
+            showModal = true;
+            showValidationError = false;
+            Console.WriteLine($"Modal abierto para editar ID: {feriaevento.Id}, Activa: {fullData.Activa}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos para editar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar los datos para editar.");
+        }
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        currentFeria = new ModelFeria();
+        activaTemp = false; // ✅ Resetear la variable temporal
+        isEditMode = false;
+        showValidationError = false;
+        Console.WriteLine("Modal cerrado");
+    }
+
+    private async Task SaveFeria()
+    {
+        // Validar campo requerido
+        if (string.IsNullOrWhiteSpace(currentFeria.DescripcionFeria))
+        {
+            showValidationError = true;
+            StateHasChanged();
+            return;
+        }
+
+        // ✅ IMPORTANTE: Asignar el valor temporal al modelo antes de guardar
+        currentFeria.Activa = activaTemp;
+
+        isSaving = true;
+        showValidationError = false;
+
+        try
+        {
+            Console.WriteLine($"Guardando feria - ID: {currentFeria.Id}, Activa: {currentFeria.Activa}");
+
+            var result = await feria_Service.AddUpdateAsync(currentFeria);
+
+            if (result)
+            {
+                await JSRuntime.InvokeVoidAsync("alert",
+                    isEditMode ? "Feria actualizada correctamente." : "Feria creada correctamente.");
+
+                CloseModal();
+
+                // Recargar la tabla
+                if (table != null)
+                {
+                    await table.ReloadServerData();
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error al guardar la Feria.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al guardar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Ocurrió un error al guardar la feria.");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmDelete(int id)
+    {
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "¿Estás seguro?\n¡Esta acción no se puede deshacer!");
+
+        if (confirmed)
+        {
+            try
+            {
+                var deleteResult = await feria_Service.DeleteAsync(id);
+                if (deleteResult)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Eliminado\nLa Feria ha sido eliminada correctamente.");
+
+                    if (table != null)
+                    {
+                        await table.ReloadServerData();
+                    }
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error\nNo fue posible eliminar la feria.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Error\nOcurrió un error al eliminar la feria.");
+            }
+        }
+    }
+
+    private async Task PrintTable()
+    {
+        await JSRuntime.InvokeVoidAsync("printTable");
+    }
+
+    private DateTime? fechaInicioTemp
+    {
+        get => currentFeria.FechaInicio.HasValue ? currentFeria.FechaInicio.Value.ToDateTime(new TimeOnly(0)) : null;
+        set => currentFeria.FechaInicio = value.HasValue ? DateOnly.FromDateTime(value.Value) : null;
+    }
+
+    private DateTime? fechaFinTemp
+    {
+        get => currentFeria.FechaFin.HasValue ? currentFeria.FechaFin.Value.ToDateTime(new TimeOnly(0)) : null;
+        set => currentFeria.FechaFin = value.HasValue ? DateOnly.FromDateTime(value.Value) : null;
+    }
+}

@@ -1,0 +1,507 @@
+﻿@page "/EspacioParque"
+
+@using System.Text.Json
+@using CarnetsdeFeria.Models
+@using CarnetsdeFeria.Interfaces
+@using ModelEspacio = CarnetsdeFeria.Models.EspacioParque
+
+@inject IEspacioParque espacio_Service
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+
+
+<h3 style="margin-bottom: 20px;">Gestión de Espacios del Parque</h3>
+
+<div style="margin-bottom: 20px;">
+    <button @onclick="OpenCreateModal" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Agregar Nuevo
+    </button>
+    <button @onclick="PrintTable" class="btn btn-secondary ml-2">
+        <i class="fas fa-print"></i> Imprimir
+    </button>
+</div>
+
+<MudPaper Elevation="3" Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-2 text-center" Align="Align.Center">Espacios del Parque</MudText>
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" sm="6">
+            <MudTextField T="string" Label="Buscar por Espacio"
+                          Variant="Variant.Outlined"
+                          @bind-Value="searchArea"
+                          Immediate="true"
+                          DebounceInterval="300"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          AdornmentColor="Color.Primary"
+                          OnDebounceIntervalElapsed="Search" />
+        </MudItem>
+    </MudGrid>
+
+    <br />
+
+    @if (isLoading)
+    {
+        <div class="spinner-container">
+            <img src="/images/world-spinner.gif" alt="Cargando..." class="spinner-image" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="ModelEspacio"
+                  ServerData="@(new Func<TableState, CancellationToken, Task<TableData<ModelEspacio>>>(ServerReload))"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Loading="@isLoading"
+                  RowClass="cursor-pointer"
+                  Class="printable-table"
+                  @ref="table">
+
+            <HeaderContent>
+                <MudTh>Descripción</MudTh>
+                <MudTh>Cap. Personas</MudTh>
+                <MudTh>Cap. Vehículos</MudTh>
+                <MudTh>Dimensiones (m)</MudTh>
+                <MudTh>Total m²</MudTh>
+                <MudTh>Uso Feria</MudTh>
+                <MudTh>Arrendamiento</MudTh>
+                <MudTh>Estado</MudTh>
+                <MudTh Class="acciones">Acciones</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="Descripción del Espacio">@context.DescripcionEspacio</MudTd>
+                <MudTd DataLabel="Capacidad Personas">@context.CapacidadPersonas</MudTd>
+                <MudTd DataLabel="Capacidad Vehículos">@context.CapacidadVehiculos</MudTd>
+                <MudTd DataLabel="Dimensiones">@($"{context.MetrosAncho:F2} x {context.MetrosLargo:F2}")</MudTd>
+                <MudTd DataLabel="Total m²">@context.TotalMetros</MudTd>
+                <MudTd DataLabel="Uso Feria">
+                    @if (context.FeriaUso.HasValue)
+                    {
+                        <MudChip T="string" Color="@(context.FeriaUso.Value? Color.Success: Color.Error)"
+                                 Size="Size.Small">
+                            @(context.FeriaUso.Value ? "✅ Sí" : "⛔ No")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">⚠️ No definido</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Arrendamiento">
+                    @if (context.Arrendamineto.HasValue)
+                    {
+                        <MudChip T="string" Color="@(context.Arrendamineto.Value? Color.Success: Color.Error)"
+                                 Size="Size.Small">
+                            @(context.Arrendamineto.Value ? "✅ Sí" : "⛔ No")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">⚠️ No definido</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Estado">
+                    @if (context.Estatus.HasValue)
+                    {
+                        <MudChip T="string" Color="@(context.Estatus.Value? Color.Success: Color.Error)"
+                                 Size="Size.Small">
+                            @(context.Estatus.Value ? "✅ Activo" : "⛔ Inactivo")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">⚠️ No definido</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Acciones" Class="acciones">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   OnClick="@(() => OpenEditModal(context))"
+                                   Title="Editar" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   OnClick="@(() => ConfirmDelete(context.Id))"
+                                   Title="Eliminar" />
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager RowsPerPageString="Espacios por página:"
+                               InfoFormat="@infoFormat"
+                               PageSizeOptions="new int[] { 20, 25, 30, 40, int.MaxValue }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+<!-- Modal para Crear/Editar usando Bootstrap -->
+@if (showModal)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Editar Espacio" : "Nuevo Espacio")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group mb-3">
+                        <label for="Espacio" class="form-label">Descripción del Espacio</label>
+                        <input type="text"
+                               class="form-control"
+                               id="Espacio"
+                               @bind="currentEspacio.DescripcionEspacio"
+                               placeholder="Ingrese la descripción del espacio"
+                               required />
+                        @if (showValidationError && string.IsNullOrWhiteSpace(currentEspacio.DescripcionEspacio))
+                        {
+                            <div class="text-danger mt-1">La descripción es requerida</div>
+                        }
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="capacidadPersonas" class="form-label">Capacidad de Personas</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="capacidadPersonas"
+                                       @bind="currentEspacio.CapacidadPersonas"
+                                       min="0"
+                                       placeholder="0" />
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="capacidadVehiculos" class="form-label">Capacidad de Vehículos</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="capacidadVehiculos"
+                                       @bind="currentEspacio.CapacidadVehiculos"
+                                       min="0"
+                                       placeholder="0" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="metrosAncho" class="form-label">Metros de Ancho</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="metrosAncho"
+                                       @bind="currentEspacio.MetrosAncho"
+                                       step="0.01"
+                                       min="0"
+                                       placeholder="0.00" />
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="metrosLargo" class="form-label">Metros de Largo</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="metrosLargo"
+                                       @bind="currentEspacio.MetrosLargo"
+                                       step="0.01"
+                                       min="0"
+                                       placeholder="0.00" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label for="informacion" class="form-label">Información Adicional</label>
+                        <textarea class="form-control"
+                                  id="informacion"
+                                  @bind="currentEspacio.Informacion"
+                                  rows="3"
+                                  placeholder="Información adicional del espacio"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="tblaFeriaUso" @bind="feriaUsoTemp" />
+                                <label class="form-check-label fw-bold" for="tblaFeriaUso">
+                                    @((feriaUsoTemp ? "✅ Uso para Feria" : "⛔ Sin Uso para Feria"))
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="tblaArrendamiento" @bind="arrendamientoTemp" />
+                                <label class="form-check-label fw-bold" for="tblaArrendamiento">
+                                    @((arrendamientoTemp ? "✅ Disponible para Arrendamiento" : "⛔ No Disponible"))
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="tblaEstatus" @bind="estatusTemp" />
+                                <label class="form-check-label fw-bold" for="tblaEstatus">
+                                    @((estatusTemp ? "✅ Espacio Activo" : "⛔ Espacio Inactivo"))
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                        Cancelar
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SaveEspacio"
+                            disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Guardando...</span>
+                        }
+                        else
+                        {
+                            <span>@(isEditMode ? "Actualizar" : "Guardar")</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+
+    private bool isLoading = false;
+    private string infoFormat = "{first_item}-{last_item} de {all_items}";
+    private DialogOptions dialogOptions = new() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private string searchArea = "";
+    private MudTable<ModelEspacio> table;
+
+    // Variables para el modal
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool showValidationError = false;
+    private bool isSaving = false;
+    private ModelEspacio currentEspacio = new ModelEspacio();
+
+    // ✅ Variables temporales para manejar los checkboxes nullable
+    private bool arrendamientoTemp = false;
+    private bool feriaUsoTemp = false;
+    private bool estatusTemp = true;
+
+    private async Task<TableData<ModelEspacio>> ServerReload(TableState state, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"ServerReload - Página: {state.Page + 1}, PageSize: {state.PageSize}, Búsqueda: '{searchArea}'");
+
+        try
+        {
+            var page = state.Page + 1;
+            var pageSize = state.PageSize;
+
+            var result = await espacio_Service.GetPaginatedAsync(page, pageSize, searchArea);
+
+            Console.WriteLine($"ServerReload - Datos obtenidos: {result?.Items?.Count ?? 0} items de {result?.TotalCount ?? 0} total");
+
+            return new TableData<ModelEspacio>
+            {
+                Items = result?.Items ?? new List<ModelEspacio>(),
+                TotalItems = result?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en ServerReload: {ex.Message}");
+            return new TableData<ModelEspacio>
+            {
+                Items = new List<ModelEspacio>(),
+                TotalItems = 0
+            };
+        }
+    }
+
+    private async Task Search()
+    {
+        Console.WriteLine($"Search - Término de búsqueda: '{searchArea}'");
+
+        if (table != null)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        currentEspacio = new ModelEspacio
+        {
+            Id = 0,
+            DescripcionEspacio = "",
+            CapacidadPersonas = null,
+            CapacidadVehiculos = null,
+            MetrosAncho = null,
+            MetrosLargo = null,
+            TotalMetros = null,
+            Informacion = "",
+            FeriaUso = true, // ✅ Valor por defecto para nuevos espacios
+            Arrendamineto = false,
+            Estatus = true
+        };
+        arrendamientoTemp = false; // ✅ Inicializar las variables temporales
+        feriaUsoTemp = true;
+        estatusTemp = true;
+        isEditMode = false;
+        showModal = true;
+        showValidationError = false;
+        Console.WriteLine("Modal abierto para crear");
+    }
+
+    private async Task OpenEditModal(ModelEspacio espacioevento)
+    {
+        try
+        {
+            // Obtener los datos completos del elemento
+            var fullData = await espacio_Service.GetByIdAsync(espacioevento.Id);
+
+            currentEspacio = new ModelEspacio
+            {
+                Id = fullData.Id,
+                DescripcionEspacio = fullData.DescripcionEspacio,
+                CapacidadPersonas = fullData.CapacidadPersonas,
+                CapacidadVehiculos = fullData.CapacidadVehiculos,
+                MetrosAncho = fullData.MetrosAncho,
+                MetrosLargo = fullData.MetrosLargo,
+                TotalMetros = fullData.TotalMetros,
+                Informacion = fullData.Informacion,
+                FeriaUso = fullData.FeriaUso,
+                Arrendamineto = fullData.Arrendamineto,
+                Estatus = fullData.Estatus
+            };
+
+            // ✅ Inicializar las variables temporales con los valores actuales
+            arrendamientoTemp = fullData.Arrendamineto ?? false;
+            feriaUsoTemp = fullData.FeriaUso ?? false;
+            estatusTemp = fullData.Estatus ?? true;
+
+            isEditMode = true;
+            showModal = true;
+            showValidationError = false;
+            Console.WriteLine($"Modal abierto para editar ID: {espacioevento.Id}, FeriaUso: {fullData.FeriaUso}, Arrendamiento: {fullData.Arrendamineto}, Estatus: {fullData.Estatus}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos para editar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar los datos para editar.");
+        }
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        currentEspacio = new ModelEspacio();
+        arrendamientoTemp = false; // ✅ Resetear las variables temporales
+        feriaUsoTemp = false;
+        estatusTemp = true;
+        isEditMode = false;
+        showValidationError = false;
+        Console.WriteLine("Modal cerrado");
+    }
+
+    private async Task SaveEspacio()
+    {
+        // Validar campo requerido
+        if (string.IsNullOrWhiteSpace(currentEspacio.DescripcionEspacio))
+        {
+            showValidationError = true;
+            StateHasChanged();
+            return;
+        }
+
+        // ✅ IMPORTANTE: Asignar los valores temporales al modelo antes de guardar
+        currentEspacio.Arrendamineto = arrendamientoTemp;
+        currentEspacio.FeriaUso = feriaUsoTemp;
+        currentEspacio.Estatus = estatusTemp;
+
+        // Calcular total de metros si es necesario
+        if (currentEspacio.MetrosAncho.HasValue && currentEspacio.MetrosLargo.HasValue &&
+            currentEspacio.MetrosAncho.Value > 0 && currentEspacio.MetrosLargo.Value > 0)
+        {
+            currentEspacio.TotalMetros = currentEspacio.MetrosAncho.Value * currentEspacio.MetrosLargo.Value;
+        }
+
+        isSaving = true;
+        showValidationError = false;
+
+        try
+        {
+            Console.WriteLine($"Guardando espacio - ID: {currentEspacio.Id}, FeriaUso: {currentEspacio.FeriaUso}, Arrendamiento: {currentEspacio.Arrendamineto}, Estatus: {currentEspacio.Estatus}");
+
+            var result = await espacio_Service.AddUpdateAsync(currentEspacio);
+
+            if (result)
+            {
+                await JSRuntime.InvokeVoidAsync("alert",
+                    isEditMode ? "Espacio actualizado correctamente." : "Espacio creado correctamente.");
+
+                CloseModal();
+
+                // Recargar la tabla
+                if (table != null)
+                {
+                    await table.ReloadServerData();
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error al guardar el Espacio.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al guardar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Ocurrió un error al guardar el espacio.");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmDelete(int id)
+    {
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "¿Estás seguro?\n¡Esta acción no se puede deshacer!");
+
+        if (confirmed)
+        {
+            try
+            {
+                var deleteResult = await espacio_Service.DeleteAsync(id);
+                if (deleteResult)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Eliminado\nEl Espacio ha sido eliminado correctamente.");
+
+                    if (table != null)
+                    {
+                        await table.ReloadServerData();
+                    }
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error\nNo fue posible eliminar el espacio.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Error\nOcurrió un error al eliminar el espacio.");
+            }
+        }
+    }
+
+    private async Task PrintTable()
+    {
+        await JSRuntime.InvokeVoidAsync("printTable");
+    }
+}

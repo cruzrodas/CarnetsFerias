@@ -1,0 +1,1066 @@
+﻿@page "/Carnets_Principal"
+
+@using System.Text.Json
+@using CarnetsdeFeria.Models
+@using CarnetsdeFeria.Interfaces
+@using ModelAreaFeria = CarnetsdeFeria.Models.FeriaArea
+@using ModelParticipacion = CarnetsdeFeria.Models.Participacion
+@using ModelIdentificacion = CarnetsdeFeria.Models.DocumentoIdentificacion
+@using Modelcarnet = CarnetsdeFeria.Models.FeriaCarnet
+
+@inject ICarnet carnetFeria_Service
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+<h3 style="margin-bottom: 20px;">Carnets de Feria</h3>
+
+<div style="margin-bottom: 20px;">
+    <button @onclick="OpenCreateModal" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Agregar Nuevo
+    </button>
+    <button @onclick="PrintTable" class="btn btn-secondary ml-2">
+        <i class="fas fa-print"></i> Imprimir
+    </button>
+</div>
+
+<MudPaper Elevation="3" Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-2 text-center" Align="Align.Center">Carnets de feria</MudText>
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" sm="6">
+            <MudTextField T="string" Label="Buscar por nombre"
+                          Variant="Variant.Outlined"
+                          @bind-Value="searchArea"
+                          Immediate="true"
+                          DebounceInterval="300"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          AdornmentColor="Color.Primary"
+                          OnDebounceIntervalElapsed="Search" />
+        </MudItem>
+    </MudGrid>
+
+    <br />
+
+    @if (isLoading)
+    {
+        <div class="spinner-container">
+            <img src="/images/world-spinner.gif" alt="Cargando..." class="spinner-image" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="Modelcarnet"
+                  ServerData="@(new Func<TableState, CancellationToken, Task<TableData<Modelcarnet>>>(ServerReload))"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Loading="@isLoading"
+                  RowClass="cursor-pointer"
+                  Class="printable-table"
+                  @ref="table">
+
+            <HeaderContent>
+                <MudTh>Nombre</MudTh>
+                <MudTh>Apellido</MudTh>
+                <MudTh>Participacion</MudTh>
+                <MudTh>No. Boleta</MudTh>
+                <MudTh>Foto</MudTh>
+                <MudTh>Area de feria</MudTh>
+                <MudTh>Feria</MudTh>
+                <MudTh>No de Estand</MudTh>
+                <MudTh>Impreso</MudTh>
+                <MudTh Class="acciones">Acciones</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="Nombre">@context.Nombre</MudTd>
+                <MudTd DataLabel="Apellido">@context.Apellido</MudTd>
+                <MudTd DataLabel="Participacion">@context.IdParticipacionNavigation?.DescripcionParticipacion</MudTd>
+                <MudTd DataLabel="Numero de Boleta">@context.NoBoleta</MudTd>
+                <MudTd DataLabel="Foto">
+                    @if (!string.IsNullOrEmpty(context.Foto))
+                    {
+                        <img src="@context.Foto" alt="Foto" style="width: 40px; height: 40px; border-radius: 50%;" />
+                    }
+                    else
+                    {
+                        <span class="text-muted">Sin foto</span>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Area de feria">@context.IdFeriaAreaNavigation?.DescripcionArea</MudTd>
+                <MudTd DataLabel="Feria">@context.IdFeriaAreaNavigation?.IdFeriaNavigation?.DescripcionFeria</MudTd>
+                <MudTd DataLabel="No Stand">@context.NoStand</MudTd>
+                <MudTd DataLabel="Impreso">
+                    @if (context.Impresion == true)
+                    {
+                        <span class="badge bg-success">Impreso</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-warning">Pendiente</span>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Acciones" Class="acciones">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   OnClick="@(() => OpenEditModal(context))"
+                                   Title="Editar" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Visibility"
+                                   Color="Color.Info"
+                                   OnClick="@(() => OpenPreviewModal(context))"
+                                   Title="Vista previa e imprimir" />
+@*                     <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   OnClick="@(() => ConfirmDelete(context.Id))"
+                                   Title="Eliminar" /> *@
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager RowsPerPageString="Productos por página:"
+                               InfoFormat="@infoFormat"
+                               PageSizeOptions="new int[] { 20, 25, 30, 40, int.MaxValue }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+@if (showModal)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Editar Carnet" : "Nuevo Carnet")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <!-- Columna izquierda -->
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label for="nombre" class="form-label">Nombre *</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="nombre"
+                                       @bind="currentCarnetFeria.Nombre"
+                                       placeholder="Ingrese el nombre del cliente"
+                                       required />
+                                @if (showValidationError && string.IsNullOrWhiteSpace(currentCarnetFeria.Nombre))
+                                {
+                                    <div class="text-danger mt-1">El nombre es requerido</div>
+                                }
+                            </div>
+
+                            <div class="form-group mb-3">
+                                <label for="participacion" class="form-label">Tipo de Participación *</label>
+                                <select class="form-select" id="participacion" @bind="currentCarnetFeria.IdParticipacion">
+                                    <option value="">-- Seleccione una Participación --</option>
+                                    @if (participacionesDisponibles != null)
+                                    {
+                                        @foreach (var participacion in participacionesDisponibles)
+                                        {
+                                            <option value="@participacion.Id">@participacion.DescripcionParticipacion</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && (!currentCarnetFeria.IdParticipacion.HasValue || currentCarnetFeria.IdParticipacion == 0))
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un tipo de participación</div>
+                                }
+                            </div>
+
+                            @if (!isEditMode)
+                            {
+                             <br />
+                            <br />
+
+                            <div class="form-group mb-3">
+                                <label for="tipoDocumento" class="form-label">Documento de Identificación *</label>
+                                <select class="form-select" id="tipoDocumento" @bind="currentCarnetFeria.IdDocIdentificacion">
+                                    <option value="0">-- Seleccione una Identificación --</option>
+                                    @if (DocIdentificacionDisponibles != null)
+                                    {
+                                        @foreach (var doc in DocIdentificacionDisponibles)
+                                        {
+                                            <option value="@doc.Id">@doc.TipoIdentificacion</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && (currentCarnetFeria.IdDocIdentificacion == 0 || currentCarnetFeria.IdDocIdentificacion == null))
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un tipo de identificación</div>
+                                }
+                            </div>
+
+                            <div class="form-group mb-3">
+                                <label for="areaFeria" class="form-label">Área de Feria *</label>
+                                <select class="form-select" id="areaFeria" @bind="currentCarnetFeria.IdFeriaArea">
+                                    <option value="0">-- Seleccione un Área --</option>
+                                    @if (areasFeriaDisponibles != null)
+                                    {
+                                        @foreach (var area in areasFeriaDisponibles)
+                                        {
+                                            <option value="@area.Id">@area.DescripcionArea</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && currentCarnetFeria.IdFeriaArea == 0)
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un área</div>
+                                }
+                                </div>
+                            }
+
+                            else
+                            {
+                             <br />
+                            <br />
+                            <br />
+                            <br />
+
+                            <div class="form-group mb-3">
+                                <label for="tipoDocumento" class="form-label">Documento de Identificación *</label>
+                                <select class="form-select" id="tipoDocumento" @bind="currentCarnetFeria.IdDocIdentificacion">
+                                    <option value="0">-- Seleccione una Identificación --</option>
+                                    @if (DocIdentificacionDisponibles != null)
+                                    {
+                                        @foreach (var doc in DocIdentificacionDisponibles)
+                                        {
+                                            <option value="@doc.Id">@doc.TipoIdentificacion</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && (currentCarnetFeria.IdDocIdentificacion == 0 || currentCarnetFeria.IdDocIdentificacion == null))
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un tipo de identificación</div>
+                                }
+                            </div>
+
+                            <div class="form-group mb-3">
+                                <label for="areaFeria" class="form-label">Área de Feria *</label>
+                                <select class="form-select" id="areaFeria" @bind="currentCarnetFeria.IdFeriaArea">
+                                    <option value="0">-- Seleccione un Área --</option>
+                                    @if (areasFeriaDisponibles != null)
+                                    {
+                                        @foreach (var area in areasFeriaDisponibles)
+                                        {
+                                            <option value="@area.Id">@area.DescripcionArea</option>
+                                        }
+                                    }
+                                </select>
+                                @if (showValidationError && currentCarnetFeria.IdFeriaArea == 0)
+                                {
+                                    <div class="text-danger mt-1">Debe seleccionar un área</div>
+                                }
+                                </div>
+                                
+                            }
+
+
+                        </div>
+
+                        <!-- Columna derecha -->
+                        <div class="col-md-6">
+
+                            <div class="form-group mb-3">
+                                <label for="apellido" class="form-label">Apellido *</label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="apellido"
+                                       @bind="currentCarnetFeria.Apellido"
+                                       placeholder="Ingrese el apellido del cliente"
+                                       required />
+                                @if (showValidationError && string.IsNullOrWhiteSpace(currentCarnetFeria.Apellido))
+                                {
+                                    <div class="text-danger mt-1">El apellido es requerido</div>
+                                }
+                            </div>
+
+                            @if (!isEditMode)
+{
+    <div class="form-group mb-3">
+        <label for="noBoleta" class="form-label">Número de Boleta</label>
+        <input type="number"
+               class="form-control"
+               id="noBoleta"
+               @bind="currentCarnetFeria.NoBoleta"
+               placeholder="Ingrese el número de boleta" />
+    </div>
+
+    <div class="form-group mb-3">
+        <div class="form-check">
+            <input class="form-check-input"
+                   type="checkbox"
+                   id="boletaCortesia"
+                   @bind="currentCarnetFeria.BoletaCortesia" />
+            <label class="form-check-label" for="boletaCortesia">
+                Boleta de Cortesía
+            </label>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Mostrar valores como solo lectura en modo edición -->
+    <div class="form-group mb-3">
+        <label class="form-label">Número de Boleta</label>
+        <div class="form-control bg-light text-muted" style="cursor: not-allowed;">
+            @currentCarnetFeria.NoBoleta
+        </div>
+    </div>
+
+    <div class="form-group mb-3">
+        <label class="form-label">Boleta de Cortesía</label>
+        <div class="form-control bg-light text-muted" style="cursor: not-allowed;">
+            @(currentCarnetFeria.BoletaCortesia ? "Sí" : "No")
+        </div>
+    </div>
+}
+                
+
+                            <div class="form-group mb-3">
+                                <label for="noIdentificacion" class="form-label">Número de identificación *</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="noIdentificacion"
+                                       @bind="currentCarnetFeria.NoIdenitficacion"
+                                       placeholder="Ingrese el número de identificación"
+                                       required />
+                                @if (showValidationError && currentCarnetFeria.NoIdenitficacion == 0)
+                                {
+                                    <div class="text-danger mt-1">El número de identificación es requerido</div>
+                                }
+                            </div>
+                            <div class="form-group mb-3">
+                                <label for="noStand" class="form-label">Número de Stand *</label>
+                                <input type="number"
+                                       class="form-control"
+                                       id="noStand"
+                                       @bind="currentCarnetFeria.NoStand"
+                                       placeholder="Ingrese el número de Stand donde se ubicará"
+                                       required />
+                                @if (showValidationError && currentCarnetFeria.NoStand == 0)
+                                {
+                                    <div class="text-danger mt-1">El número de stand es requerido</div>
+                                }
+                            </div>
+
+
+                        </div>
+
+                        @if (!isEditMode)
+{
+    <div class="row">
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Vista Camara</label>
+            <br />
+            <button type="button" class="btn btn-warning" @onclick="AbrirCamara">Abrir Cámara</button>
+            <div class="position-relative">
+                <video id="video" width="320" height="240" autoplay></video>
+                <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-3">
+            <label class="form-label">Vista Fotografia</label>
+            <br />
+            <button type="button" class="btn btn-primary mb-2" @onclick="CapturarImagen">
+                Tomar Foto
+            </button>
+            @if (!string.IsNullOrEmpty(base64Image))
+            {
+                <button type="button" class="btn btn-warning mb-2 ms-2" @onclick="VolverATomarFoto">
+                    <i class="fas fa-redo"></i> Tomar Otra Foto
+                </button>
+            }
+            <br />
+            <img id="capturedImage" alt="Foto tomada" class="img-thumbnail mt-2" style="width: 320px; height: 240px; @(string.IsNullOrEmpty(base64Image) ? "display:none;" : "")" />
+        </div>
+        <div class="col-md-4 d-flex flex-column align-items-start">
+            <textarea id="capturedTextArea" style="display: none;" readonly></textarea>
+        </div>
+    </div>
+}
+else
+{
+    <!-- En modo edición, mostrar solo una nota informativa -->
+    <div class="row">
+        <div class="col-12">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i>
+                <strong>Nota:</strong> La fotografía no se puede modificar en modo edición. 
+            </div>
+        </div>
+    </div>
+}
+                    </div>
+
+                    <!-- Información de fechas (solo visible en modo edición) -->
+                    @if (isEditMode)
+                    {
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Información del Sistema</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <strong>Fecha de Creación:</strong><br />
+                                                <span class="text-muted">@currentCarnetFeria.FechaCreacion?.ToString("dd/MM/yyyy")</span>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <strong>Fecha de Modificación:</strong><br />
+                                                <span class="text-muted">@currentCarnetFeria.FechaModificacion?.ToString("dd/MM/yyyy")</span>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <strong>Estado de Impresión:</strong><br />
+                                                @if (currentCarnetFeria.Impresion == true)
+                                                {
+                                                    <span class="badge bg-success">Ya fue impreso</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-warning">Pendiente de impresión</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                        Cancelar
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SaveCarnetFeria"
+                            disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Guardando...</span>
+                        }
+                        else
+                        {
+                            <span>@(isEditMode ? "Actualizar" : "Guardar")</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+     </div>
+  }
+  
+
+
+
+    @if (showPreviewModal)
+    {
+        <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Vista Previa del Carnet</h5>
+                        <button type="button" class="btn-close" @onclick="ClosePreviewModal"></button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <div id="carnet">
+                            <div class="contenido">
+                                <img src="@(carnetToPreview.Foto)" alt="Foto del carnet" class="img" />
+                            </div>
+                            <p style="text-align: center; font-size: 1.0em;"><strong class="texto-azul2">@carnetToPreview.IdParticipacionNavigation?.DescripcionParticipacion</strong></p>
+                            <div class="columnas">
+                                <div class="columna">
+                                    <p><strong class="text">@carnetToPreview.Nombre @carnetToPreview.Apellido</strong></p>
+                                </div>
+                                <div class="columna">
+                                    <p><strong><span class="texto-azul">@carnetToPreview.IdDocIdentificacionNavigation?.TipoIdentificacion</span> @carnetToPreview.NoIdenitficacion</strong></p>
+                                    <p><strong class="texto-azul">UBICACIÓN:</strong> <strong class="area">@carnetToPreview.IdFeriaAreaNavigation?.DescripcionArea</strong></p>
+                                    <p><strong class="texto-azul">STAND:</strong> <strong>@carnetToPreview.NoStand</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="ClosePreviewModal">Cerrar</button>
+                        <button type="button" class="btn btn-success" @onclick="PrintCarnetFromPreview">
+                            <i class="fas fa-print"></i> Imprimir Carnet
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+
+    <style>
+        #carnet {
+            border-radius: 5%;
+            padding: 20px;
+            width: 8.7cm;
+            height: 5.9cm;
+            text-align: left;
+            background-image: url('/Imagen/fondo.png');
+            background-size: cover;
+            background-position: center;
+            overflow: hidden;
+            margin: 0 auto;
+        }
+
+        .img {
+            max-width: 100px;
+            height: 100px;
+            margin-bottom: 1px;
+            margin-right: 60px;
+            border: 3px solid #3a0040;
+        }
+
+        .columnas {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            height: 60%;
+            align-items: flex-start;
+        }
+
+        .columna {
+            flex: 1;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+
+        .texto-azul {
+            color: #3a0040;
+            font-size: 90%;
+        }
+
+        .texto-azul2 {
+            color: #3a0040;
+            font-size: 100%;
+            text-align: center;
+        }
+
+        .text {
+            font-size: 170%;
+            margin-top: 10px;
+        }
+
+        .area {
+            font-size: 100%;
+            margin-top: 10px;
+        }
+
+        #carnet p {
+            font-size: 60%;
+            margin: 5px 0;
+        }
+
+        .contenido {
+            display: flex;
+            align-items: flex-start;
+        }
+    </style>
+
+}
+
+@code {
+    private bool showPreviewModal = false;
+    private Modelcarnet carnetToPreview = new Modelcarnet();
+
+
+
+
+    private bool isLoading = false;
+    private string infoFormat = "{first_item}-{last_item} de {all_items}";
+    private DialogOptions dialogOptions = new() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private string searchArea = "";
+    private MudTable<Modelcarnet> table;
+    private bool showOnlyActive = false;
+    public string base64Image;
+
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool showValidationError = false;
+    private bool isSaving = false;
+    private Modelcarnet currentCarnetFeria = new Modelcarnet();
+
+    private bool estatusTemp = true;
+
+    private List<ModelAreaFeria> areasFeriaDisponibles = new();
+    private List<ModelParticipacion> participacionesDisponibles = new();
+    private List<ModelIdentificacion> DocIdentificacionDisponibles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDropdownData();
+    }
+
+    private async Task LoadDropdownData()
+    {
+        try
+        {
+            areasFeriaDisponibles = await carnetFeria_Service.GetAreaAsync();
+            participacionesDisponibles = await carnetFeria_Service.GetParticipacionAsync();
+            DocIdentificacionDisponibles = await carnetFeria_Service.GetIdentificacionAsync();
+
+            Console.WriteLine($"Cargadas {areasFeriaDisponibles.Count} áreas, {participacionesDisponibles.Count} participaciones y {DocIdentificacionDisponibles.Count} identificaciones.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos de dropdown: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar datos iniciales.");
+        }
+    }
+
+    private async Task<TableData<Modelcarnet>> ServerReload(TableState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var page = state.Page + 1;
+            var pageSize = state.PageSize;
+
+            MPaginatedResult<Modelcarnet> result = showOnlyActive
+                ? await carnetFeria_Service.GetPaginatedActiveAsync(page, pageSize, searchArea)
+                : await carnetFeria_Service.GetPaginatedAsync(page, pageSize, searchArea);
+
+            return new TableData<Modelcarnet>
+            {
+                Items = result?.Items ?? new List<Modelcarnet>(),
+                TotalItems = result?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en ServerReload: {ex.Message}");
+        }
+
+        return new TableData<Modelcarnet>
+        {
+            Items = new List<Modelcarnet>(),
+            TotalItems = 0
+        };
+    }
+
+    private async Task Search()
+    {
+        Console.WriteLine($"Search - Término de búsqueda: '{searchArea}'");
+        if (table != null)
+            await table.ReloadServerData();
+    }
+
+    private async Task OnShowOnlyActiveChanged()
+    {
+        Console.WriteLine($"Filtro de activos cambiado: {showOnlyActive}");
+        if (table != null)
+            await table.ReloadServerData();
+    }
+
+    private async Task OpenCreateModal()
+    {
+        currentCarnetFeria = new Modelcarnet
+        {
+            Nombre = "",
+            Apellido = "",
+            IdParticipacion = null,
+            IdDocIdentificacion = 0,
+            NoIdenitficacion = 0,
+            NoBoleta = 0,
+            BoletaCortesia = false,
+            Foto = null,
+            FechaCreacion = DateOnly.FromDateTime(DateTime.Today), // Se establece automáticamente
+            FechaModificacion = null, // No hay modificación en creación
+            Impresion = false, // Por defecto no impreso
+            IdFeriaArea = 0,
+            NoStand = 0,
+            Estatus = true
+        };
+
+        estatusTemp = true;
+        isEditMode = false;
+        showModal = true;
+        showValidationError = false;
+
+        await LoadDropdownData();
+        Console.WriteLine("Modal abierto para crear carnet.");
+    }
+    private async Task OpenEditModal(Modelcarnet carnet)
+    {
+        try
+        {
+            var fullData = await carnetFeria_Service.GetByIdAsync(carnet.Id);
+
+            currentCarnetFeria = new Modelcarnet
+            {
+                Id = fullData.Id,
+                Nombre = fullData.Nombre,
+                Apellido = fullData.Apellido,
+                IdParticipacion = fullData.IdParticipacion,
+                IdDocIdentificacion = fullData.IdDocIdentificacion,
+                NoIdenitficacion = fullData.NoIdenitficacion,
+                NoBoleta = fullData.NoBoleta,
+                BoletaCortesia = fullData.BoletaCortesia,
+                Foto = fullData.Foto,
+                FechaCreacion = fullData.FechaCreacion,
+                FechaModificacion = fullData.FechaModificacion,
+                Impresion = fullData.Impresion,
+                IdFeriaArea = fullData.IdFeriaArea,
+                NoStand = fullData.NoStand,
+                Estatus = fullData.Estatus,
+            };
+
+            // AGREGAR ESTA LÍNEA PARA CARGAR LA IMAGEN EN EDICIÓN
+            base64Image = fullData.Foto;
+
+            estatusTemp = fullData.Estatus ?? true;
+            isEditMode = true;
+            showModal = true;
+            showValidationError = false;
+
+            await LoadDropdownData();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al editar carnet: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar los datos del carnet.");
+        }
+    }
+
+    private async Task CloseModal()
+    {
+        showModal = false;
+        currentCarnetFeria = new Modelcarnet();
+        base64Image = "";
+        estatusTemp = true;
+        isEditMode = false;
+        showValidationError = false;
+
+        // Limpiar la imagen mostrada
+        await JS.InvokeVoidAsync("clearCapturedImage", "capturedImage", "capturedTextArea");
+
+        Console.WriteLine("Modal cerrado");
+    }
+
+    private async Task SaveCarnetFeria()
+    {
+        showValidationError = false;
+
+        // Validaciones básicas
+        if (string.IsNullOrWhiteSpace(currentCarnetFeria.Nombre) ||
+            string.IsNullOrWhiteSpace(currentCarnetFeria.Apellido) ||
+            !currentCarnetFeria.IdParticipacion.HasValue ||
+            currentCarnetFeria.IdParticipacion == 0 ||
+            currentCarnetFeria.IdDocIdentificacion == 0 ||
+            currentCarnetFeria.NoIdenitficacion == 0 ||
+            currentCarnetFeria.IdFeriaArea == 0 ||
+            currentCarnetFeria.NoStand == 0)
+        {
+            showValidationError = true;
+            StateHasChanged();
+            return;
+        }
+
+        currentCarnetFeria.Estatus = estatusTemp;
+
+        // Manejo automático de fechas
+        if (!isEditMode)
+        {
+            // Para nuevos registros, establecer fecha de creación automáticamente
+            currentCarnetFeria.FechaCreacion = DateOnly.FromDateTime(DateTime.Now);
+            currentCarnetFeria.FechaModificacion = null;
+        }
+        else
+        {
+            // Para ediciones, actualizar fecha de modificación automáticamente
+            currentCarnetFeria.FechaModificacion = DateOnly.FromDateTime(DateTime.Now);
+        }
+
+        isSaving = true;
+
+        try
+        {
+            Console.WriteLine($"Guardando carnet - ID: {currentCarnetFeria.Id}");
+
+            var result = await carnetFeria_Service.AddUpdateAsync(currentCarnetFeria);
+
+            if (result)
+            {
+                await JSRuntime.InvokeVoidAsync("alert",
+                    isEditMode ? "Carnet actualizado correctamente." : "Carnet creado correctamente.");
+
+                CloseModal();
+
+                if (table != null)
+                    await table.ReloadServerData();
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error al guardar el carnet.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al guardar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al guardar el carnet.");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task PrintCarnet(Modelcarnet carnet)
+    {
+        if (carnet.Impresion == true)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Este carnet ya fue impreso anteriormente.");
+            return;
+        }
+
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            "¿Está seguro de imprimir este carnet?\n\nUna vez impreso, no se podrá volver a imprimir.");
+
+        if (confirmed)
+        {
+            try
+            {
+                // Marcar como impreso
+                carnet.Impresion = true;
+                carnet.FechaModificacion = DateOnly.FromDateTime(DateTime.Now);
+
+                var result = await carnetFeria_Service.AddUpdateAsync(carnet);
+
+                if (result)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Carnet marcado como impreso correctamente.");
+
+                    // Aquí puedes agregar la lógica real de impresión
+                    // await JSRuntime.InvokeVoidAsync("printCarnet", carnet.Id);
+
+                    if (table != null)
+                        await table.ReloadServerData();
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error al marcar el carnet como impreso.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al imprimir carnet: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Error al procesar la impresión del carnet.");
+            }
+        }
+    }
+
+    private async Task ConfirmDelete(int id)
+    {
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+            "¿Estás seguro de que deseas eliminar este carnet?\n\nEsta acción lo eliminará permanentemente.");
+
+        if (confirmed)
+        {
+            try
+            {
+                var deleteResult = await carnetFeria_Service.DeleteAsync(id);
+                if (deleteResult)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Carnet eliminado correctamente.");
+                    if (table != null)
+                        await table.ReloadServerData();
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error al eliminar el carnet.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Ocurrió un error al eliminar el carnet.");
+            }
+        }
+    }
+
+    private async Task PrintTable()
+    {
+        await JSRuntime.InvokeVoidAsync("printTable");
+    }
+
+
+
+    private async Task AbrirCamara()
+    {
+        //await JS.InvokeVoidAsync("openCamera", "video", "canvas", "capturedImage");
+        await JS.InvokeVoidAsync("openCamera", "video", "canvas");
+    }
+
+
+    private async Task CapturarImagen()
+    {
+        try
+        {
+            base64Image = await JS.InvokeAsync<string>("captureImage", "video", "canvas", "capturedImage", "capturedTextArea");
+
+            if (!string.IsNullOrEmpty(base64Image))
+            {
+                // Guardar la imagen completa con el prefijo data:image
+                currentCarnetFeria.Foto = base64Image;
+                StateHasChanged();
+                Console.WriteLine("Imagen capturada y guardada correctamente.");
+            }
+            else
+            {
+                Console.WriteLine("No se capturó imagen.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al capturar imagen: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al capturar la imagen.");
+        }
+    }
+
+    private async Task VolverATomarFoto()
+    {
+        try
+        {
+            // Limpiar la imagen actual
+            base64Image = "";
+            currentCarnetFeria.Foto = null;
+
+            // Limpiar la imagen mostrada
+            await JS.InvokeVoidAsync("clearCapturedImage", "capturedImage", "capturedTextArea");
+
+            // Volver a abrir la cámara
+            await JS.InvokeVoidAsync("openCamera", "video", "canvas", "capturedImage");
+
+            StateHasChanged();
+            Console.WriteLine("Preparado para tomar nueva foto.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al preparar nueva foto: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al preparar nueva captura.");
+        }
+    }
+
+
+
+
+    private async Task OpenPreviewModal(Modelcarnet carnet)
+    {
+        try
+        {
+            // Obtener los datos completos del carnet con las navegaciones
+            carnetToPreview = await carnetFeria_Service.GetByIdAsync(carnet.Id);
+            showPreviewModal = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al abrir vista previa: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar la vista previa del carnet.");
+        }
+    }
+
+    private void ClosePreviewModal()
+    {
+        showPreviewModal = false;
+        carnetToPreview = new Modelcarnet();
+
+    }
+
+    private async Task PrintCarnetFromPreview()
+    {
+        try
+        {
+            // Verificar si ya fue impreso y pedir confirmación
+           if (carnetToPreview.Impresion == true)
+{
+    await JSRuntime.InvokeVoidAsync("alert", 
+        "❌ ACCESO DENEGADO\n\nEste carnet ya fue impreso anteriormente y no se puede volver a imprimir por políticas de seguridad.\n\nSi necesita una reimpresión, contacte al administrador del sistema.");
+    return;
+}
+            else
+            {
+                bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+                    "¿Está seguro de imprimir este carnet?\n\nUna vez impreso, quedará marcado como tal en el sistema.");
+
+                if (!confirmed)
+                    return;
+            }
+
+            // Verificar que el archivo JavaScript esté cargado
+            var jsAvailable = await JSRuntime.InvokeAsync<bool>("eval", "typeof window.printCarnet !== 'undefined' && typeof window.printCarnet.printCustom === 'function'");
+
+            if (!jsAvailable)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error: El archivo PrintCarnet.js no está cargado. Recargue la página e intente nuevamente.");
+                return;
+            }
+
+            // Dar tiempo para que el modal se renderice completamente
+            await Task.Delay(500);
+
+            // Llamar a la función de impresión
+            var printResult = await JSRuntime.InvokeAsync<bool>("window.printCarnet.printCustom");
+
+            if (printResult)
+            {
+                // SOLO marcar como impreso si NO estaba impreso antes (evitar reimprimir)
+                if (carnetToPreview.Impresion != true)
+                {
+                    carnetToPreview.Impresion = true;
+                    carnetToPreview.FechaModificacion = DateOnly.FromDateTime(DateTime.Now);
+
+                    var result = await carnetFeria_Service.AddUpdateAsync(carnetToPreview);
+
+                    if (result)
+                    {
+                        await JSRuntime.InvokeVoidAsync("alert", "✅ Carnet enviado a impresión y marcado como impreso correctamente.");
+
+                        // Actualizar la tabla
+                        if (table != null)
+                            await table.ReloadServerData();
+
+                        // Cerrar el modal de vista previa
+                        ClosePreviewModal();
+                    }
+                    else
+                    {
+                        await JSRuntime.InvokeVoidAsync("alert", "⚠️ Carnet enviado a impresión, pero hubo un error al actualizar el estado en la base de datos.");
+                    }
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "✅ Carnet reenviado a impresión correctamente.\n\n⚠️ NOTA: Este carnet ya estaba marcado como impreso.");
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "❌ No se pudo completar la impresión. Intente nuevamente.");
+            }
+
+        }
+        catch (JSException jsEx)
+        {
+            Console.WriteLine($"Error JavaScript al imprimir: {jsEx.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error en la función de impresión. Verifique la consola del navegador para más detalles.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error general al imprimir carnet: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al procesar la impresión del carnet.");
+        }
+    }
+
+}
+
+

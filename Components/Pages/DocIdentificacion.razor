@@ -1,0 +1,324 @@
+﻿@page "/DocIdentificacion"
+
+@using System.Text.Json
+@using CarnetsdeFeria.Models
+@using CarnetsdeFeria.Interfaces
+@using ModelIdentificacion = CarnetsdeFeria.Models.DocumentoIdentificacion
+
+@inject IDocIdentificacion feria_identificacion_Service
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+
+
+<h3 style="margin-bottom: 20px;">Tipos de Identificacion Personal</h3>
+
+<div style="margin-bottom: 20px;">
+    <button @onclick="OpenCreateModal" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Agregar Nuevo
+    </button>
+    <button @onclick="PrintTable" class="btn btn-secondary ml-2">
+        <i class="fas fa-print"></i> Imprimir
+    </button>
+</div>
+
+<MudPaper Elevation="3" Class="pa-4">
+    <MudText Typo="Typo.h5" Class="mb-2 text-center" Align="Align.Center">Tipos de Identificacion Personal</MudText>
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" sm="6">
+            <MudTextField T="string" Label="Buscar por Tipo de Identificacion"
+                          Variant="Variant.Outlined"
+                          @bind-Value="searchArea"
+                          Immediate="true"
+                          DebounceInterval="300"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          AdornmentColor="Color.Primary"
+                          OnDebounceIntervalElapsed="Search" />
+        </MudItem>
+    </MudGrid>
+
+    <br />
+
+    @if (isLoading)
+    {
+        <div class="spinner-container">
+            <img src="/images/world-spinner.gif" alt="Cargando..." class="spinner-image" />
+        </div>
+    }
+    else
+    {
+        <MudTable T="ModelIdentificacion"
+                  ServerData="@(new Func<TableState, CancellationToken, Task<TableData<ModelIdentificacion>>>(ServerReload))"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Loading="@isLoading"
+                  RowClass="cursor-pointer"
+                  Class="printable-table"
+                  @ref="table">
+
+            <HeaderContent>
+                <MudTh>Documentos de Identificacion</MudTh>
+                <MudTh Class="acciones">Acciones</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="Tipos de Documentos de Identificacion">@context.TipoIdentificacion</MudTd>
+                <MudTd DataLabel="Acciones" Class="acciones">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   OnClick="@(() => OpenEditModal(context))"
+                                   Title="Editar" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   OnClick="@(() => ConfirmDelete(context.Id))"
+                                   Title="Eliminar" />
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager RowsPerPageString="Productos por página:"
+                               InfoFormat="@infoFormat"
+                               PageSizeOptions="new int[] { 20, 25, 30, 40, int.MaxValue }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+<!-- Modal para Crear/Editar usando Bootstrap -->
+@if (showModal)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditMode ? "Editar Tipo de Documento de Identificacion" : "Nuevo Tipo de Documento de Identificacion")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group mb-3">
+                        <label for="Identificacion" class="form-label">Descipcion de los Tipos de Identificacion</label>
+                        <input type="text"
+                               class="form-control"
+                               id="Identificacion"
+                               @bind="currentIdentificacion.TipoIdentificacion"
+                               placeholder="Ingrese el tipo de identifacion personal"
+                               required />
+                        @if (showValidationError && string.IsNullOrWhiteSpace(currentIdentificacion.TipoIdentificacion))
+                        {
+                            <div class="text-danger mt-1">La descripción es requerida</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">
+                        Cancelar
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="SaveIdentificacion"
+                            disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Guardando...</span>
+                        }
+                        else
+                        {
+                            <span>@(isEditMode ? "Actualizar" : "Guardar")</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+@code {
+    private bool isLoading = false;
+    private string infoFormat = "{first_item}-{last_item} de {all_items}";
+    private DialogOptions dialogOptions = new() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+    private string searchArea = "";
+    private MudTable<ModelIdentificacion> table;
+
+    // Variables para el modal
+    private bool showModal = false;
+    private bool isEditMode = false;
+    private bool showValidationError = false;
+    private bool isSaving = false;
+    private ModelIdentificacion currentIdentificacion = new ModelIdentificacion();
+
+    private async Task<TableData<ModelIdentificacion>> ServerReload(TableState state, CancellationToken cancellationToken)
+    {
+        Console.WriteLine($"ServerReload - Página: {state.Page + 1}, PageSize: {state.PageSize}, Búsqueda: '{searchArea}'");
+
+        try
+        {
+            var page = state.Page + 1;
+            var pageSize = state.PageSize;
+
+            var result = await feria_identificacion_Service.GetPaginatedAsync(page, pageSize, searchArea);
+
+            Console.WriteLine($"ServerReload - Datos obtenidos: {result?.Items?.Count ?? 0} items de {result?.TotalCount ?? 0} total");
+
+            return new TableData<ModelIdentificacion>
+            {
+                Items = result?.Items ?? new List<ModelIdentificacion>(),
+                TotalItems = result?.TotalCount ?? 0
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error en ServerReload: {ex.Message}");
+            return new TableData<ModelIdentificacion>
+            {
+                Items = new List<ModelIdentificacion>(),
+                TotalItems = 0
+            };
+        }
+    }
+
+    private async Task Search()
+    {
+        Console.WriteLine($"Search - Término de búsqueda: '{searchArea}'");
+
+        if (table != null)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        currentIdentificacion = new ModelIdentificacion
+        {
+            Id = 0,
+            TipoIdentificacion = "",
+            Estatus = true
+        };
+        isEditMode = false;
+        showModal = true;
+        showValidationError = false;
+        Console.WriteLine("Modal abierto para crear");
+    }
+
+    private async Task OpenEditModal(ModelIdentificacion docidentificacion)
+    {
+        try
+        {
+            // Obtener los datos completos del elemento
+            var fullData = await feria_identificacion_Service.GetByIdAsync(docidentificacion.Id);
+
+            currentIdentificacion = new ModelIdentificacion
+            {
+                Id = fullData.Id,
+                TipoIdentificacion = fullData.TipoIdentificacion,
+                Estatus = fullData.Estatus
+            };
+
+            isEditMode = true;
+            showModal = true;
+            showValidationError = false;
+            Console.WriteLine($"Modal abierto para editar ID: {docidentificacion.Id}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al cargar datos para editar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Error al cargar los datos para editar.");
+        }
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        currentIdentificacion = new ModelIdentificacion();
+        isEditMode = false;
+        showValidationError = false;
+        Console.WriteLine("Modal cerrado");
+    }
+
+    private async Task SaveIdentificacion()
+    {
+        // Validar campo requerido
+        if (string.IsNullOrWhiteSpace(currentIdentificacion.TipoIdentificacion))
+        {
+            showValidationError = true;
+            StateHasChanged();
+            return;
+        }
+
+        isSaving = true;
+        showValidationError = false;
+
+        try
+        {
+            var result = await feria_identificacion_Service.AddUpdateAsync(currentIdentificacion);
+
+            if (result)
+            {
+                await JSRuntime.InvokeVoidAsync("alert",
+                    isEditMode ? "Tipo de Identificacion actualizado correctamente." : "Tipo de Identificacio creado correctamente.");
+
+                CloseModal();
+
+                // Recargar la tabla
+                if (table != null)
+                {
+                    await table.ReloadServerData();
+                }
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Error al guardar el tipo de identificacio.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al guardar: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Ocurrió un error al guardar el tipo de identificacion.");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmDelete(int id)
+    {
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "¿Estás seguro?\n¡Esta acción no se puede deshacer!");
+
+        if (confirmed)
+        {
+            try
+            {
+                var deleteResult = await feria_identificacion_Service.DeleteAsync(id);
+                if (deleteResult)
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Eliminado\nEl tipo de identificcion ha sido eliminado correctamente.");
+
+                    if (table != null)
+                    {
+                        await table.ReloadServerData();
+                    }
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Error\nNo fue posible eliminar el tipo de identificacion.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Error\nOcurrió un error al eliminar el tipo de identificacion.");
+            }
+        }
+    }
+
+    private async Task PrintTable()
+    {
+        await JSRuntime.InvokeVoidAsync("printTable");
+    }
+}
